@@ -2,65 +2,80 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.sql.*;
 import java.util.Scanner;
+import javax.net.ssl.HttpsURLConnection;
 
 public class VulnerableApp {
 
-    private static final String DB_URL = "jdbc:mysql://mydatabase.com/mydb";
-    private static final String DB_USER = "admin";
-    private static final String DB_PASSWORD = "secret123";
+    private static final String DB_URL = System.getenv("DB_URL");
+    private static final String DB_USER = System.getenv("DB_USER");
+    private static final String DB_PASSWORD = System.getenv("DB_PASSWORD");
 
     public static String getUserInput() {
-        Scanner scanner = new Scanner(System.in);
-        System.out.print("Enter your name: ");
-        return scanner.nextLine();
+        try (Scanner scanner = new Scanner(System.in)) {
+            System.out.print("Enter your name: ");
+            return scanner.nextLine();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     public static void sendEmail(String to, String subject, String body) {
         try {
-            String command = String.format("echo %s | mail -s \"%s\" %s", body, subject, to);
-            Runtime.getRuntime().exec(command);
+            ProcessBuilder pb = new ProcessBuilder("mail", "-s", subject, to);
+            Process p = pb.start();
+            try (OutputStream os = p.getOutputStream()) {
+                os.write(body.getBytes());
+                os.flush();
+            }
+            p.waitFor();
         } catch (Exception e) {
-            System.out.println("Error sending email: " + e.getMessage());
+            System.out.println("Error sending email.");
         }
     }
 
     public static String getData() {
         StringBuilder result = new StringBuilder();
         try {
-            URL url = new URL("http://insecure-api.com/get-data");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            URL url = new URL("https://insecure-api.com/get-data");
+            HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
 
-            InputStream inputStream = conn.getInputStream();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                result.append(line);
+            try (InputStream inputStream = conn.getInputStream();
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    result.append(line);
+                }
             }
-
-            reader.close();
         } catch (Exception e) {
-            System.out.println("Error fetching data: " + e.getMessage());
+            System.out.println("Error fetching data.");
         }
 
         return result.toString();
     }
 
     public static void saveToDb(String data) {
-        String query = "INSERT INTO mytable (column1, column2) VALUES ('" + data + "', 'Another Value')";
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-             Statement stmt = conn.createStatement()) {
+        if (DB_URL == null || DB_USER == null || DB_PASSWORD == null) {
+            System.out.println("Database credentials not provided.");
+            return;
+        }
 
-            stmt.executeUpdate(query);
+        String query = "INSERT INTO mytable (column1, column2) VALUES (?, ?)";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+
+            pstmt.setString(1, data);
+            pstmt.setString(2, "Another Value");
+            pstmt.executeUpdate();
             System.out.println("Data saved to database.");
 
         } catch (SQLException e) {
-            System.out.println("Database error: " + e.getMessage());
+            System.out.println("Database error.");
         }
     }
 
